@@ -77,13 +77,21 @@ The system consists of modular subsystems:
 
 ## Prototype Screenshots
 
-### 1. Active Closed-Loop Predictive Tracking (AstraLock)
-![Predictive Tracking Demo](docs/screenshots/tracking_predictive_demo.png)
-*Showing detected beacon (green circle), latency-aware future predicted position (red circle), optical axis boresight crosshair, tracking error line, and live engineering telemetry.*
+### 1. Widescreen Engineering Dashboard (Primary Presentation Screen)
+![Main Dashboard](docs/screenshots/main_dashboard.png)
+*Complete operational dashboard showing Scenario Controls, Central Virtual Camera Viewport with telemetry HUD, Real-time Tracking Error History plot, and Live Baseline vs Predictive Benchmark Table.*
 
-### 2. Staged Reacquisition during Line-of-Sight Occlusion
+### 2. Latency-Aware Closed-Loop Predictive Tracking (AstraLock)
+![Predictive Tracking Demo](docs/screenshots/predictive_tracking.png)
+*Showing detected beacon (green circle), latency-aware future predicted position (orange marker at $t + 80\text{ ms}$), boresight optical axis, and real-time state estimation cards.*
+
+### 3. Baseline (Reactive) vs Predictive Comparison Dashboard
+![Baseline Comparison Demo](docs/screenshots/baseline_comparison.png)
+*Demonstrating reactive tracking lag and lower lock retention ($26.23\%$ vs $45.67\%$) under identical disturbance conditions.*
+
+### 4. Staged Reacquisition during Line-of-Sight Occlusion
 ![Reacquisition Demo](docs/screenshots/tracking_reacquisition_demo.png)
-*During temporary occlusion ($t = 5.0\text{--}6.0\text{ s}$), the reacquisition manager deploys an expanding uncertainty search bounding box centered on the last estimated track, regaining lock within 40 ms of beacon emergence.*
+*During temporary occlusion ($t = 5.0\text{--}6.0\text{ s}$), the reacquisition manager deploys an expanding uncertainty search bounding box, regaining lock within 40 ms of beacon emergence.*
 
 ---
 

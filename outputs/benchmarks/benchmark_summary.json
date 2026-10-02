@@ -17,8 +17,8 @@
       "lock_retention_percent": 26.23,
       "lock_loss_count": 21,
       "mean_reacquisition_time_s": 0.5257,
-      "mean_processing_time_ms": 0.383,
-      "measured_fps": 2614.1,
+      "mean_processing_time_ms": 0.422,
+      "measured_fps": 2367.1,
       "lock_threshold_px": 15.0
     },
     "predictive": {
@@ -34,8 +34,8 @@
       "lock_retention_percent": 45.67,
       "lock_loss_count": 24,
       "mean_reacquisition_time_s": 0.3383,
-      "mean_processing_time_ms": 0.431,
-      "measured_fps": 2319.6,
+      "mean_processing_time_ms": 0.453,
+      "measured_fps": 2206.2,
       "lock_threshold_px": 15.0
     },
     "error_reduction_pct": 15.52,
@@ -59,8 +59,8 @@
       "lock_retention_percent": 1.07,
       "lock_loss_count": 4,
       "mean_reacquisition_time_s": 2.3533,
-      "mean_processing_time_ms": 0.403,
-      "measured_fps": 2483.9,
+      "mean_processing_time_ms": 0.45,
+      "measured_fps": 2222.0,
       "lock_threshold_px": 15.0
     },
     "predictive": {
@@ -76,8 +76,8 @@
       "lock_retention_percent": 6.26,
       "lock_loss_count": 11,
       "mean_reacquisition_time_s": 1.2764,
-      "mean_processing_time_ms": 0.454,
-      "measured_fps": 2203.1,
+      "mean_processing_time_ms": 0.478,
+      "measured_fps": 2092.4,
       "lock_threshold_px": 15.0
     },
     "error_reduction_pct": 15.69,
@@ -101,8 +101,8 @@
       "lock_retention_percent": 7.59,
       "lock_loss_count": 12,
       "mean_reacquisition_time_s": 1.2545,
-      "mean_processing_time_ms": 0.47,
-      "measured_fps": 2129.1,
+      "mean_processing_time_ms": 0.488,
+      "measured_fps": 2049.7,
       "lock_threshold_px": 15.0
     },
     "predictive": {
@@ -118,8 +118,8 @@
       "lock_retention_percent": 44.74,
       "lock_loss_count": 22,
       "mean_reacquisition_time_s": 0.3755,
-      "mean_processing_time_ms": 0.48,
-      "measured_fps": 2085.4,
+      "mean_processing_time_ms": 0.448,
+      "measured_fps": 2230.4,
       "lock_threshold_px": 15.0
     },
     "error_reduction_pct": 28.92,
@@ -143,8 +143,8 @@
       "lock_retention_percent": 14.65,
       "lock_loss_count": 20,
       "mean_reacquisition_time_s": 0.639,
-      "mean_processing_time_ms": 0.412,
-      "measured_fps": 2429.8,
+      "mean_processing_time_ms": 0.434,
+      "measured_fps": 2306.5,
       "lock_threshold_px": 15.0
     },
     "predictive": {
@@ -160,8 +160,8 @@
       "lock_retention_percent": 41.41,
       "lock_loss_count": 24,
       "mean_reacquisition_time_s": 0.365,
-      "mean_processing_time_ms": 0.398,
-      "measured_fps": 2512.2,
+      "mean_processing_time_ms": 0.449,
+      "measured_fps": 2224.7,
       "lock_threshold_px": 15.0
     },
     "error_reduction_pct": 25.55,

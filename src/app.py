@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import argparse
+import json
 import yaml
 import numpy as np
 import cv2
@@ -20,147 +21,28 @@ from src.tracking.predictor import FutureLOSPredictor
 from src.tracking.reacquisition import ReacquisitionManager
 from src.control.pan_tilt_controller import PanTiltPIDController
 from src.evaluation.metrics import MetricsTracker
+from src.evaluation.benchmark import run_benchmark_suite
+from src.ui.dashboard import AstraLockDashboard
 
 
-def draw_hud(
-    display_img: np.ndarray,
-    obs: dict,
-    det_result: dict,
-    est_result: dict,
-    pred_info: dict,
-    ctrl_result: dict,
-    reacq_info: dict,
-    metrics: MetricsTracker,
-    is_locked: bool,
-    fps: float,
-    method: str,
-    latency_tau_s: float,
-) -> np.ndarray:
-    """Renders visual overlays, crosshairs, prediction vectors, and engineering telemetry panel."""
-    h, w = obs["frame"].shape[:2]
-    cx, cy = obs["camera_center_px"]
-    panel_w = 340
-    total_w = w + panel_w
+# Global mouse action state for OpenCV callback
+pending_action = None
 
-    # Create composite canvas: Camera viewport (left) + Engineering panel (right)
-    canvas = np.zeros((h, total_w, 3), dtype=np.uint8)
 
-    # 1. Convert sensor frame to BGR and place on left
-    raw_bgr = cv2.cvtColor(obs["frame"], cv2.COLOR_GRAY2BGR)
-    canvas[:, :w] = raw_bgr
-
-    # Draw boresight crosshair (optical axis target)
-    cv2.drawMarker(canvas, (int(cx), int(cy)), (180, 180, 180), cv2.MARKER_CROSS, 28, 1)
-    cv2.circle(canvas, (int(cx), int(cy)), int(metrics.lock_threshold_px), (80, 80, 80), 1)
-    cv2.putText(canvas, "OPTICAL AXIS", (int(cx) + 12, int(cy) - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
-
-    # Draw search ROI if reacquisition is active
-    if reacq_info.get("is_searching") and reacq_info.get("search_roi"):
-        rx0, ry0, rx1, ry1 = reacq_info["search_roi"]
-        cv2.rectangle(canvas, (rx0, ry0), (rx1, ry1), (0, 165, 255), 1, cv2.LINE_AA)
-        cv2.putText(canvas, f"ROI SEARCH: {reacq_info['state']}", (rx0, max(15, ry0 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 165, 255), 1)
-
-    # Draw detected centroid (GREEN)
-    if det_result["detected"] and det_result["centroid"]:
-        dx, dy = int(det_result["centroid"][0]), int(det_result["centroid"][1])
-        cv2.circle(canvas, (dx, dy), 7, (0, 255, 0), 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"DETECTED ({det_result['snr_db']:.1f} dB)", (dx + 10, dy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 0), 1)
-
-    # Draw future predicted position (RED) in predictive mode
-    if method == "predictive" and pred_info.get("predicted_pos"):
-        px, py = int(pred_info["predicted_pos"][0]), int(pred_info["predicted_pos"][1])
-        cv2.circle(canvas, (px, py), 6, (0, 0, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"PREDICTED (t+{int(latency_tau_s*1000)}ms)", (px + 10, py - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 255), 1)
-
-        # Draw lead vector from detected to predicted
-        if det_result["detected"] and det_result["centroid"]:
-            cv2.arrowedLine(canvas, (dx, dy), (px, py), (0, 100, 255), 1, tipLength=0.25)
-
-    # Draw line from target to optical axis (tracking error visual)
-    target_pt = pred_info.get("predicted_pos") if method == "predictive" else det_result["centroid"]
-    if target_pt is not None:
-        tx, ty = int(target_pt[0]), int(target_pt[1])
-        color_err = (0, 255, 0) if is_locked else (0, 165, 255)
-        cv2.line(canvas, (int(cx), int(cy)), (tx, ty), color_err, 1, cv2.LINE_AA)
-
-    # 2. Render Engineering & Telemetry Panel (Right)
-    panel_x = w + 15
-    cv2.line(canvas, (w, 0), (w, h), (50, 50, 50), 1)
-
-    y = 28
-    cv2.putText(canvas, "ASTRALOCK FSOC TESTBED", (panel_x, y), cv2.FONT_HERSHEY_DUPLEX, 0.55, (255, 255, 255), 1)
-    y += 18
-    cv2.putText(canvas, "Team: Trojan Titans | SIH26169", (panel_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 160, 160), 1)
-    y += 24
-    cv2.line(canvas, (panel_x, y - 8), (total_w - 15, y - 8), (60, 60, 60), 1)
-
-    # Mode Indicator
-    mode_color = (255, 180, 50) if method == "predictive" else (200, 200, 200)
-    cv2.putText(canvas, f"MODE: {method.upper()}", (panel_x, y), cv2.FONT_HERSHEY_DUPLEX, 0.48, mode_color, 1)
-    y += 22
-
-    # Lock Status Badge
-    if is_locked:
-        badge_text = "STATUS: [ LOCKED ]"
-        badge_color = (0, 255, 0)
-    elif reacq_info.get("is_searching"):
-        badge_text = f"STATUS: [ {reacq_info['state']} ]"
-        badge_color = (0, 165, 255)
-    else:
-        badge_text = "STATUS: [ UNLOCKED / ACQUIRING ]"
-        badge_color = (0, 0, 255)
-    cv2.putText(canvas, badge_text, (panel_x, y), cv2.FONT_HERSHEY_DUPLEX, 0.44, badge_color, 1)
-    y += 26
-
-    # Telemetry metrics
-    tracking_err_px = ctrl_result.get("error_px", 0.0)
-    tracking_err_deg = ctrl_result.get("error_deg", 0.0)
-    pan_deg = obs["camera_pan_deg"]
-    tilt_deg = obs["camera_tilt_deg"]
-    summary = metrics.compute_summary()
-
-    telemetry_items = [
-        ("Sim Time", f"{obs['time']:.2f} s / {summary['total_simulation_time_s']:.1f} s"),
-        ("Frame Rate", f"{fps:.1f} FPS (loop: {metrics.processing_times_s[-1]*1000.0:.1f} ms)"),
-        ("Tracking Error", f"{tracking_err_px:.1f} px ({tracking_err_deg:.3f} deg)"),
-        ("Mean Error (Run)", f"{summary['mean_tracking_error_px'] or 0.0:.1f} px"),
-        ("Lock Threshold", f"<= {metrics.lock_threshold_px:.1f} px"),
-        ("Lock Retention", f"{summary['lock_retention_percent']:.1f} %"),
-        ("Lock Loss Events", f"{summary['lock_loss_count']}"),
-        ("Initial Acq Time", f"{summary['acquisition_time_s'] or 'N/A'} s"),
-        ("Pan / Tilt Angles", f"{pan_deg:+.2f} / {tilt_deg:+.2f} deg"),
-        ("Loop Latency (tau)", f"{latency_tau_s * 1000.0:.0f} ms"),
-        ("Signal SNR", f"{det_result.get('snr_db', 0.0):.1f} dB" if det_result['detected'] else "LOST"),
-        ("Platform Jitter", f"+/- {np.hypot(obs['jitter_deg'][0], obs['jitter_deg'][1]):.3f} deg"),
-        ("ML Residual Status", "IN DEV (State est. active)"),
-    ]
-
-    for label, val in telemetry_items:
-        cv2.putText(canvas, f"{label}:", (panel_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 140, 140), 1)
-        cv2.putText(canvas, str(val), (panel_x + 130, y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (220, 220, 220), 1)
-        y += 18
-
-    # Keyboard Controls Guide
-    y += 12
-    cv2.line(canvas, (panel_x, y - 6), (total_w - 15, y - 6), (60, 60, 60), 1)
-    cv2.putText(canvas, "HOTKEYS:", (panel_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
-    y += 18
-    hotkeys = [
-        "[M] Toggle Baseline / Predictive",
-        "[T] Switch Trajectory Pattern",
-        "[R] Reset Run",
-        "[S] Save Screenshot",
-        "[SPACE] Pause / Resume",
-        "[Q / ESC] Quit & Export",
-    ]
-    for hk in hotkeys:
-        cv2.putText(canvas, hk, (panel_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (120, 120, 120), 1)
-        y += 15
-
-    return canvas
+def on_mouse_click(event, x, y, flags, param):
+    """Handles mouse click events on dashboard buttons."""
+    global pending_action
+    if event == cv2.EVENT_LBUTTONDOWN:
+        dashboard = param
+        for btn in dashboard.buttons:
+            bx0, by0, bx1, by1 = btn["bbox"]
+            if bx0 <= x <= bx1 and by0 <= y <= by1:
+                pending_action = btn["id"]
+                break
 
 
 def main():
+    global pending_action
     parser = argparse.ArgumentParser(description="AstraLock: Coarse Alignment Predictive Testbed for Mobile FSOC")
     parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to configuration YAML")
     parser.add_argument("--method", type=str, choices=["baseline", "predictive"], default="predictive", help="Tracking method")
@@ -223,6 +105,19 @@ def main():
         method=cfg["tracking"]["method"],
     )
 
+    # Initialize professional engineering dashboard
+    dashboard = AstraLockDashboard(width=1440, height=810)
+
+    # Load existing benchmark results if available
+    benchmark_path = os.path.join("outputs", "benchmarks", "benchmark_summary.json")
+    benchmark_data = None
+    if os.path.exists(benchmark_path):
+        try:
+            with open(benchmark_path, "r", encoding="utf-8") as f:
+                benchmark_data = {"scenarios": json.load(f)}
+        except Exception:
+            benchmark_data = None
+
     print("=" * 70)
     print("ASTRALOCK: Adaptive Predictive Coarse-Alignment Testbed for Mobile FSOC")
     print(f"Tracking Method: {cfg['tracking']['method'].upper()}")
@@ -236,18 +131,78 @@ def main():
     prev_tilt = obs["camera_tilt_deg"]
     done = False
     paused = False
+    eval_mode = False
     fps_estimate = 50.0
+
     trajectories = ["curved", "constant_velocity", "sudden_change", "spiral"]
     traj_idx = trajectories.index(cfg["target"]["trajectory_type"]) if cfg["target"]["trajectory_type"] in trajectories else 0
+
+    # Rolling error history and event log
+    error_history: list[float] = []
+    max_history = 150
+    event_log: list[str] = [
+        f"[{obs['time']:.2f}s] System initialized: {cfg['target']['trajectory_type']} trajectory ({cfg['target']['speed_deg_s']} deg/s)"
+    ]
 
     window_name = "AstraLock: FSOC Coarse Alignment Testbed (SIH26169)"
     if not args.headless:
         cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(window_name, on_mouse_click, dashboard)
 
-    first_frame_saved = False
+    main_dashboard_saved = False
+    predictive_saved = False
+    baseline_saved = False
+    reacq_saved = False
 
     while not done:
         loop_start = time.perf_counter()
+
+        # Handle pending mouse clicks from UI
+        if pending_action:
+            action = pending_action
+            pending_action = None
+
+            if action == "pause":
+                paused = not paused
+                event_log.append(f"[{obs['time']:.2f}s] Simulation {'paused' if paused else 'resumed'}")
+            elif action == "method":
+                cfg["tracking"]["method"] = "baseline" if cfg["tracking"]["method"] == "predictive" else "predictive"
+                metrics.method = cfg["tracking"]["method"]
+                event_log.append(f"[{obs['time']:.2f}s] Tracking method switched to: {cfg['tracking']['method'].upper()}")
+            elif action == "trajectory":
+                traj_idx = (traj_idx + 1) % len(trajectories)
+                cfg["target"]["trajectory_type"] = trajectories[traj_idx]
+                env = FSOCTestbedEnvironment(cfg)
+                estimator.reset()
+                controller.reset()
+                reacquisition.reset()
+                metrics.reset()
+                error_history.clear()
+                dashboard.trail.clear()
+                obs = env.reset()
+                prev_pan = obs["camera_pan_deg"]
+                prev_tilt = obs["camera_tilt_deg"]
+                event_log.append(f"[{obs['time']:.2f}s] Switched trajectory to: {cfg['target']['trajectory_type']}")
+            elif action == "eval":
+                eval_mode = not eval_mode
+                event_log.append(f"[{obs['time']:.2f}s] Evaluation mode: {'ENABLED' if eval_mode else 'DISABLED'}")
+            elif action == "reset":
+                obs = env.reset()
+                estimator.reset()
+                controller.reset()
+                reacquisition.reset()
+                metrics.reset()
+                error_history.clear()
+                dashboard.trail.clear()
+                prev_pan = obs["camera_pan_deg"]
+                prev_tilt = obs["camera_tilt_deg"]
+                event_log.append(f"[{obs['time']:.2f}s] Simulation reset to initial state")
+            elif action == "benchmark":
+                event_log.append(f"[{obs['time']:.2f}s] Executing empirical benchmark suite...")
+                print("\n[Running Benchmark Suite]...")
+                benchmark_res = run_benchmark_suite(output_dir="outputs/benchmarks")
+                benchmark_data = benchmark_res
+                event_log.append(f"[{obs['time']:.2f}s] Benchmark completed successfully")
 
         if not paused:
             frame = obs["frame"]
@@ -275,11 +230,17 @@ def main():
             det_result = detector.detect(frame, roi=reacq_info["search_roi"])
 
             # Inform reacquisition manager of detection result
-            reacquisition.update(
+            reacq_updated = reacquisition.update(
                 target_detected=det_result["detected"],
                 current_time=sim_time,
                 last_estimated_pos=det_result["centroid"],
             )
+
+            # Log reacquisition / loss events
+            if reacq_updated.get("reacquisition_time_s", 0) > 0 and (not reacq_saved or len(event_log) < 25):
+                event_log.append(f"[{sim_time:.2f}s] Beacon reacquired after {reacq_updated['reacquisition_time_s']:.2f}s search")
+            if obs.get("is_occluded") and "occlusion" not in event_log[-1]:
+                event_log.append(f"[{sim_time:.2f}s] Line-of-sight occlusion: Local search initiated")
 
             # 3. State estimation (Kalman filter)
             meas = det_result["centroid"] if det_result["detected"] else None
@@ -315,6 +276,15 @@ def main():
                 processing_time_s=proc_time,
             )
 
+            if is_locked and metrics.consecutive_locked == metrics.min_consecutive:
+                event_log.append(f"[{sim_time:.2f}s] Coarse lock established (error <= {metrics.lock_threshold_px} px)")
+
+            # Record tracking error into rolling history
+            err_px = ctrl_result.get("error_px", 0.0)
+            error_history.append(err_px)
+            if len(error_history) > max_history:
+                error_history.pop(0)
+
             # 7. Step simulation environment (Closed loop gimbal orientation update)
             obs, done = env.step(
                 delta_pan_deg=ctrl_result["delta_pan_deg"],
@@ -323,34 +293,51 @@ def main():
 
             fps_estimate = 0.9 * fps_estimate + 0.1 * (1.0 / max(proc_time, 1e-4))
 
-        canvas = draw_hud(
-            display_img=obs["frame"],
+        # Render complete engineering dashboard
+        summary = metrics.compute_summary()
+        canvas = dashboard.render(
             obs=obs,
             det_result=det_result,
             est_result=est_result,
             pred_info=pred_info,
             ctrl_result=ctrl_result,
             reacq_info=reacq_info,
-            metrics=metrics,
+            metrics_summary=summary,
+            error_history=error_history,
+            event_log=event_log,
+            benchmark_data=benchmark_data,
+            cfg=cfg,
             is_locked=is_locked,
+            is_paused=paused,
+            eval_mode=eval_mode,
             fps=fps_estimate,
-            method=cfg["tracking"]["method"],
-            latency_tau_s=cfg["tracking"]["latency_tau_s"],
         )
 
-        # Auto-save representative screenshots for documentation
-        if not first_frame_saved and obs["time"] >= 2.5:
-            shot_path = os.path.join(screenshot_dir, f"tracking_{cfg['tracking']['method']}_demo.png")
-            cv2.imwrite(shot_path, canvas)
-            print(f"[Screenshot saved]: {shot_path}")
-            first_frame_saved = True
+        # Auto-save presentation screenshots for SIH submission
+        if not main_dashboard_saved and obs["time"] >= 2.5 and is_locked:
+            main_shot = os.path.join(screenshot_dir, "main_dashboard.png")
+            cv2.imwrite(main_shot, canvas)
+            print(f"[Dashboard screenshot saved]: {main_shot}")
+            main_dashboard_saved = True
+
+        if not predictive_saved and cfg["tracking"]["method"] == "predictive" and obs["time"] >= 3.0 and is_locked:
+            pred_shot = os.path.join(screenshot_dir, "predictive_tracking.png")
+            cv2.imwrite(pred_shot, canvas)
+            print(f"[Predictive screenshot saved]: {pred_shot}")
+            predictive_saved = True
+
+        if not baseline_saved and cfg["tracking"]["method"] == "baseline" and obs["time"] >= 3.0:
+            base_shot = os.path.join(screenshot_dir, "baseline_comparison.png")
+            cv2.imwrite(base_shot, canvas)
+            print(f"[Baseline screenshot saved]: {base_shot}")
+            baseline_saved = True
 
         # Capture reacquisition during occlusion window
-        if obs["time"] >= 5.3 and obs["time"] <= 5.5 and reacq_info.get("is_searching"):
+        if obs["time"] >= 5.3 and obs["time"] <= 5.5 and reacq_info.get("is_searching") and not reacq_saved:
             reacq_shot = os.path.join(screenshot_dir, "tracking_reacquisition_demo.png")
-            if not os.path.exists(reacq_shot):
-                cv2.imwrite(reacq_shot, canvas)
-                print(f"[Reacquisition screenshot saved]: {reacq_shot}")
+            cv2.imwrite(reacq_shot, canvas)
+            print(f"[Reacquisition screenshot saved]: {reacq_shot}")
+            reacq_saved = True
 
         if not args.headless:
             cv2.imshow(window_name, canvas)
@@ -360,11 +347,11 @@ def main():
                 break
             elif key == ord(" "):  # Pause / Resume
                 paused = not paused
-                print(f"Simulation {'Paused' if paused else 'Resumed'}")
+                event_log.append(f"[{obs['time']:.2f}s] Simulation {'paused' if paused else 'resumed'}")
             elif key in [ord("m"), ord("M")]:  # Toggle method
                 cfg["tracking"]["method"] = "baseline" if cfg["tracking"]["method"] == "predictive" else "predictive"
                 metrics.method = cfg["tracking"]["method"]
-                print(f"Switched tracking method to: {cfg['tracking']['method'].upper()}")
+                event_log.append(f"[{obs['time']:.2f}s] Method toggled to: {cfg['tracking']['method'].upper()}")
             elif key in [ord("t"), ord("T")]:  # Cycle trajectory
                 traj_idx = (traj_idx + 1) % len(trajectories)
                 cfg["target"]["trajectory_type"] = trajectories[traj_idx]
@@ -373,23 +360,43 @@ def main():
                 controller.reset()
                 reacquisition.reset()
                 metrics.reset()
+                error_history.clear()
+                dashboard.trail.clear()
                 obs = env.reset()
                 prev_pan = obs["camera_pan_deg"]
                 prev_tilt = obs["camera_tilt_deg"]
-                print(f"Switched trajectory to: {cfg['target']['trajectory_type']}")
+                event_log.append(f"[{obs['time']:.2f}s] Trajectory changed to: {cfg['target']['trajectory_type']}")
+            elif key in [ord("e"), ord("E")]:  # Toggle evaluation mode
+                eval_mode = not eval_mode
+                event_log.append(f"[{obs['time']:.2f}s] Eval mode: {'ON' if eval_mode else 'OFF'}")
+            elif key in [ord("b"), ord("B")]:  # Run benchmark
+                event_log.append(f"[{obs['time']:.2f}s] Running benchmark suite...")
+                benchmark_data = run_benchmark_suite(output_dir="outputs/benchmarks")
+                event_log.append(f"[{obs['time']:.2f}s] Benchmark completed")
             elif key in [ord("r"), ord("R")]:  # Reset
                 obs = env.reset()
                 estimator.reset()
                 controller.reset()
                 reacquisition.reset()
                 metrics.reset()
+                error_history.clear()
+                dashboard.trail.clear()
                 prev_pan = obs["camera_pan_deg"]
                 prev_tilt = obs["camera_tilt_deg"]
-                print("Simulation reset.")
+                event_log.append(f"[{obs['time']:.2f}s] Reset run")
             elif key in [ord("s"), ord("S")]:  # Manual screenshot
                 shot_path = os.path.join(screenshot_dir, f"screenshot_{int(time.time())}.png")
                 cv2.imwrite(shot_path, canvas)
+                event_log.append(f"[{obs['time']:.2f}s] Manual screenshot captured")
                 print(f"Saved screenshot: {shot_path}")
+            elif key in [ord("+"), ord("=")]:  # Increase speed
+                cfg["target"]["speed_deg_s"] += 0.2
+                env.target.speed = cfg["target"]["speed_deg_s"]
+                event_log.append(f"[{obs['time']:.2f}s] Target speed: {cfg['target']['speed_deg_s']:.1f} deg/s")
+            elif key in [ord("-"), ord("_")]:  # Decrease speed
+                cfg["target"]["speed_deg_s"] = max(0.2, cfg["target"]["speed_deg_s"] - 0.2)
+                env.target.speed = cfg["target"]["speed_deg_s"]
+                event_log.append(f"[{obs['time']:.2f}s] Target speed: {cfg['target']['speed_deg_s']:.1f} deg/s")
 
     if not args.headless:
         cv2.destroyAllWindows()
