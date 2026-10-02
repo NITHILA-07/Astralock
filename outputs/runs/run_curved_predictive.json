@@ -1,0 +1,17 @@
+{
+  "scenario_id": "curved_predictive",
+  "method": "predictive",
+  "total_simulation_time_s": 15.0,
+  "total_frames": 751,
+  "acquisition_time_s": 0.04,
+  "mean_tracking_error_px": 16.17,
+  "max_tracking_error_px": 58.87,
+  "std_tracking_error_px": 8.56,
+  "mean_prediction_error_px": 7.28,
+  "lock_retention_percent": 45.67,
+  "lock_loss_count": 24,
+  "mean_reacquisition_time_s": 0.3383,
+  "mean_processing_time_ms": 0.403,
+  "measured_fps": 2484.0,
+  "lock_threshold_px": 15.0
+}

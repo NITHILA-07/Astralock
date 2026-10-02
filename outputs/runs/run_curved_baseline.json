@@ -1,0 +1,17 @@
+{
+  "scenario_id": "curved_baseline",
+  "method": "baseline",
+  "total_simulation_time_s": 15.0,
+  "total_frames": 751,
+  "acquisition_time_s": 0.04,
+  "mean_tracking_error_px": 19.14,
+  "max_tracking_error_px": 60.31,
+  "std_tracking_error_px": 8.88,
+  "mean_prediction_error_px": null,
+  "lock_retention_percent": 26.23,
+  "lock_loss_count": 21,
+  "mean_reacquisition_time_s": 0.5257,
+  "mean_processing_time_ms": 0.391,
+  "measured_fps": 2555.3,
+  "lock_threshold_px": 15.0
+}
